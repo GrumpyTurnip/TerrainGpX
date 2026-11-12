@@ -1,0 +1,825 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPX to Terrain</title>
+<style>
+  :root{
+    --bg:#f4f3ee; --panel:#fff; --ink:#1d2320; --muted:#667068; --line:#dcd9cf; --soft:#f0eee7;
+    --accent:#2f6b4f; --accent-ink:#fff; --err:#b3261e; --view:#e9e7df;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#121614; --panel:#1b201d; --ink:#e8ebe6; --muted:#8f9a92; --line:#2d352f; --soft:#232a26;
+           --accent:#6fbf94; --accent-ink:#0d1a12; --err:#ff8a80; --view:#101311; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{padding:16px 24px 4px}
+  h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
+  header p{margin:2px 0 0;color:var(--muted);font-size:14px}
+  main{display:grid;grid-template-columns:minmax(340px,420px) 1fr;gap:16px;padding:12px 24px 24px;align-items:start}
+  @media(max-width:900px){main{grid-template-columns:1fr;padding:12px 14px}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+  form.panel{padding:0;overflow:visible}
+
+  /* ---- collapsible steps */
+  details.card{border-bottom:1px solid var(--line)}
+  details.card>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:13px 16px;font-weight:600;font-size:15px}
+  details.card>summary::-webkit-details-marker{display:none}
+  details.card>summary .n{width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--accent-ink);font-size:12px;display:grid;place-items:center;flex:none}
+  details.card>summary .sub{margin-left:auto;color:var(--muted);font-weight:400;font-size:12.5px;text-align:right;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  details.card>summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin:-3px 2px 0 4px;flex:none;transition:transform .15s}
+  details.card[open]>summary::after{transform:rotate(-135deg);margin-top:3px}
+  details.card .body{padding:0 16px 16px}
+  details.plain{border:0;margin-top:14px;border-top:1px solid var(--line);padding-top:10px}
+  details.plain>summary{cursor:pointer;font-size:13px;color:var(--muted)}
+
+  .drop{border:1.5px dashed var(--line);border-radius:10px;padding:16px;text-align:center;cursor:pointer;color:var(--muted)}
+  .drop.over,.drop:hover{border-color:var(--accent);color:var(--ink)}
+  .drop strong{color:var(--ink);display:block;word-break:break-all}
+  .field{margin-top:14px}
+  .field:first-child{margin-top:0}
+  .field>label,.lab{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:4px}
+  .field label b{color:var(--ink);font-weight:600}
+  .hint{font-size:12px;color:var(--muted);margin-top:4px;display:block}
+  .hint:empty{display:none}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .checks label{display:flex;gap:8px;align-items:center;margin-top:8px;font-size:14px;color:var(--ink)}
+  .checks label:first-child{margin-top:0}
+  .checks small{color:var(--muted)}
+  .checks .push{margin-left:auto}
+  input[type=color]{width:34px;height:24px;border:1px solid var(--line);border-radius:4px;padding:0;background:none;flex:none}
+  .sel,input.txt{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--ink);font:inherit;font-size:13.5px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sub-h{font-size:12px;margin:16px 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  .sub-h:first-child{margin-top:0}
+
+  /* ---- segmented buttons */
+  .seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg button{flex:1;border:0;background:transparent;color:var(--muted);padding:7px 6px;font:inherit;font-size:13px;cursor:pointer;border-right:1px solid var(--line)}
+  .seg button:last-child{border-right:0}
+  .seg button.on{background:var(--accent);color:var(--accent-ink)}
+
+  .presets{display:flex;gap:4px;margin-top:6px}
+  .presets button{flex:1;border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:7px;padding:4px 2px;font-size:12px;cursor:pointer}
+  .presets button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .est{margin-top:10px;font-size:12.5px;padding:8px 10px;background:var(--soft);border-radius:8px}
+  .est:empty{display:none}
+  .esthint{margin-top:4px;font-size:12px;color:var(--muted)}
+  .esthint:empty{display:none}
+
+  /* ---- colour schemes */
+  .schemes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .scheme{border:1.5px solid var(--line);border-radius:9px;padding:6px;background:transparent;color:var(--ink);cursor:pointer;font:inherit;font-size:12px;text-align:left}
+  .scheme i{display:block;height:20px;border-radius:5px;margin-bottom:5px}
+  .scheme.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+  .scheme:hover{border-color:var(--accent)}
+  .schemes.off{opacity:.45;pointer-events:none}
+
+  .poi{display:grid;grid-template-columns:82px 1fr 34px 52px 20px;gap:6px;align-items:center;margin-bottom:6px}
+  .poi select,.poi input[type=text],.poi input[type=number],#wp_type{width:100%;padding:5px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);font:inherit;font-size:13px}
+  .poi button{border:0;background:none;color:var(--muted);cursor:pointer;font-size:16px;padding:0}
+  button.mini{border:1px dashed var(--line);background:none;color:var(--ink);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;width:100%}
+  button.mini:hover{border-color:var(--accent)}
+  #wp_type{width:auto}
+
+  /* ---- action bar with progress */
+  .actions{position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line);border-radius:0 0 12px 12px;padding:12px 16px;z-index:5}
+  button.go{width:100%;padding:11px;border:0;border-radius:9px;background:var(--accent);color:var(--accent-ink);font-size:15px;font-weight:600;cursor:pointer}
+  button.go:disabled{opacity:.5;cursor:not-allowed}
+  #prog{display:none}
+  #prog.on{display:block}
+  .barwrap{height:12px;border-radius:7px;background:var(--soft);border:1px solid var(--line);overflow:hidden}
+  .bar{height:100%;width:0;background:var(--accent);transition:width .5s ease;
+       background-image:linear-gradient(45deg,rgba(255,255,255,.25) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.25) 50%,rgba(255,255,255,.25) 75%,transparent 75%);
+       background-size:18px 18px;animation:stripes 1s linear infinite}
+  @keyframes stripes{to{background-position:18px 0}}
+  @media (prefers-reduced-motion:reduce){.bar{animation:none}}
+  .proginfo{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px;font-size:13px}
+  .proginfo b{font-size:15px}
+  .proginfo span{color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .proginfo button{border:1px solid var(--line);background:none;color:var(--muted);border-radius:7px;padding:3px 9px;cursor:pointer;font-size:12px}
+  .err{color:var(--err);white-space:pre-wrap;font-size:13px;margin-top:8px}
+  .err:empty{display:none}
+
+  /* ---- right-hand side */
+  .viewpanel{padding:14px;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto}
+  @media(max-width:900px){.viewpanel{position:static;max-height:none}}
+  .tabs{display:flex;gap:4px;margin-bottom:10px}
+  .tabs button{border:1px solid var(--line);background:transparent;color:var(--muted);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+  .tabs button.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  #view{height:min(520px,58vh);border-radius:10px;background:var(--view);position:relative;overflow:hidden}
+  #view canvas{display:block;width:100%;height:100%}
+  #mapimg{width:100%;border-radius:10px;image-rendering:pixelated;display:none;background:var(--view)}
+  #fp{display:none}
+  #outline{width:100%;height:auto;display:block;border-radius:10px;background:var(--view)}
+  .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:24px;pointer-events:none;white-space:pre-line}
+  #note{color:var(--muted);font-size:13px;margin:10px 0 0}
+  #note:empty{display:none}
+  ul.dl{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:6px}
+  ul.dl a{display:flex;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;color:var(--ink);text-decoration:none;font-size:14px}
+  ul.dl a:hover{border-color:var(--accent)}
+  ul.dl span{color:var(--muted);font-size:12px;white-space:nowrap}
+  h3{font-size:12px;margin:18px 0 0;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em}
+  pre{background:var(--view);border-radius:8px;padding:10px;font-size:12px;overflow:auto;max-height:140px;margin:10px 0 0}
+  .swatches{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+  .swatches i{width:22px;height:22px;border-radius:5px;border:1px solid var(--line)}
+  .tile{margin-top:8px;font-size:13px;background:var(--soft);border-radius:8px;padding:10px 12px;display:grid;grid-template-columns:auto 1fr;gap:2px 12px}
+  .tile dt{color:var(--muted)} .tile dd{margin:0;font-variant-numeric:tabular-nums}
+  .nbrs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:10px;max-width:420px}
+  .nbrs button{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:8px;padding:7px 4px;font:inherit;font-size:12.5px;cursor:pointer;line-height:1.25}
+  .nbrs button:hover{border-color:var(--accent);background:var(--soft)}
+  .nbrs button small{display:block;color:var(--muted);font-size:11px}
+  .nbrs .me{display:grid;place-items:center;border:1px dashed var(--line);border-radius:8px;color:var(--muted);font-size:12px}
+  button.link{border:0;background:none;color:var(--accent);cursor:pointer;font:inherit;font-size:12.5px;padding:0;margin-top:6px}
+  .credits{color:var(--muted);font-size:12px;margin:16px 0 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>GPX to Terrain</h1>
+  <p>Turn a route into a printable 3D terrain model, with real elevation and satellite-guided colours.</p>
+</header>
+<main>
+<form class="panel" id="form" autocomplete="off">
+
+  <!-- 1. ROUTE -->
+  <details class="card" open id="s1">
+    <summary><span class="n">1</span>Route<span class="sub" id="sub1">No file yet</span></summary>
+    <div class="body">
+      <div class="drop" id="drop">
+        <strong id="fname">Drop a .gpx file here</strong>
+        <span id="fhint">or click to choose</span>
+        <input type="file" id="file" accept=".gpx" hidden>
+      </div>
+      <div class="checks field">
+        <label><input type="checkbox" id="trail" checked> Mark the route on the model
+          <input type="color" id="trail_colour" value="#e8202a" class="push"></label>
+      </div>
+      <span class="hint">No route? Choose <b>Fixed position</b> in step 2 and type a centre point instead.</span>
+    </div>
+  </details>
+
+  <!-- 2. AREA & SHAPE -->
+  <details class="card" open id="s2">
+    <summary><span class="n">2</span>Area &amp; shape<span class="sub" id="sub2">Rectangle</span></summary>
+    <div class="body">
+      <div class="field"><div class="lab">Shape</div>
+        <input type="hidden" id="shape" value="rectangle">
+        <div class="seg" data-for="shape"><button type="button" data-v="rectangle" class="on">Rectangle</button><button type="button" data-v="hexagon">Hexagon</button><button type="button" data-v="circle">Circle</button></div></div>
+
+      <div class="field"><div class="lab">Position</div>
+        <input type="hidden" id="pos" value="fit">
+        <div class="seg" data-for="pos"><button type="button" data-v="fit" class="on">Fit to my route</button><button type="button" data-v="fixed">Fixed position</button></div>
+        <div id="fixedbox" hidden style="margin-top:10px">
+          <div class="field"><label for="centre">Centre (latitude, longitude)</label>
+            <input type="text" id="centre" class="txt" placeholder="e.g. 53.0685, -4.0763" maxlength="40"></div>
+          <div class="row2" style="margin-top:10px">
+            <div><label class="lab" for="width_m">Width on the ground (m)</label>
+              <input type="number" id="width_m" class="txt" min="100" max="200000" step="any" placeholder="e.g. 3000"></div>
+            <div><label class="lab" for="base_elev">Base elevation (m)</label>
+              <input type="number" id="base_elev" class="txt" step="any" placeholder="auto"></div>
+          </div>
+          <span class="hint">For tiles that sit next to each other: use the same width, shape, ratio, rotation and detail, and the same base elevation so heights match.
+            After generating, the buttons under the model fill all of this in for each neighbouring tile.</span>
+        </div>
+      </div>
+
+      <div class="row2 field">
+        <div><label class="lab" for="ratio">Aspect ratio</label>
+          <select id="ratio" class="sel"><option value="auto">Fit the route</option><option value="1:1">1:1 (square)</option>
+            <option value="4:3">4:3</option><option value="3:2">3:2</option><option value="16:9">16:9</option>
+            <option value="2:1">2:1</option><option value="custom">Custom...</option></select>
+          <input type="text" id="ratio_custom" class="txt" placeholder="width:height" maxlength="12" hidden style="margin-top:6px"></div>
+        <div style="align-self:end" class="checks"><label><input type="checkbox" id="portrait"> Portrait</label></div>
+      </div>
+
+      <div class="field"><label for="rotate">Map rotation <b id="v_rotate">0&deg;</b></label>
+        <input type="range" id="rotate" min="-180" max="180" step="1" value="0">
+        <div class="checks" id="autorow" style="margin-top:6px"><label><input type="checkbox" id="rotate_auto"> Auto-rotate for the tightest fit to the route</label></div>
+        <span class="hint">0&deg; puts north at the top, 90&deg; puts east at the top. The Footprint tab shows a north arrow.</span></div>
+
+      <div class="row2 field" id="cornerrow">
+        <div><label class="lab" for="corner_style">Corners</label>
+          <select id="corner_style" class="sel"><option value="sharp">Sharp</option><option value="fillet">Rounded</option><option value="chamfer">Chamfered</option></select></div>
+        <div><label for="corner_size">Corner size <b id="v_corner_size">none</b></label>
+          <input type="range" id="corner_size" min="0" max="40" step="1" value="0"></div>
+      </div>
+      <span class="hint" id="shapehint">The hexagon is flat-topped; rotate by 30&deg; or 90&deg; to point a corner at the top.</span>
+      <div class="field"><label for="pad">Margin around the route <b id="v_pad">15%</b></label>
+        <input type="range" id="pad" min="0" max="100" step="5" value="15"></div>
+    </div>
+  </details>
+
+  <!-- 3. SIZE & DETAIL -->
+  <details class="card" open id="s3">
+    <summary><span class="n">3</span>Size &amp; detail<span class="sub" id="sub3">150 mm, 400 cells</span></summary>
+    <div class="body">
+      <div class="field"><label for="size">Model size (longest side) <b id="v_size">150 mm</b></label>
+        <input type="range" id="size" min="50" max="300" step="5" value="150"></div>
+      <div class="field"><label for="resolution">Detail (grid cells) <b id="v_resolution">400</b></label>
+        <input type="range" id="resolution" min="100" max="1200" step="50" value="400">
+        <div class="presets" id="presets">
+          <button type="button" data-res="200">Draft 200</button><button type="button" data-res="400">High 400</button><button type="button" data-res="700">Ultra 700</button><button type="button" data-res="1000">Max 1000</button>
+        </div>
+        <div id="est" class="est"></div><div id="esthint" class="esthint"></div></div>
+      <div class="field"><label for="lidar">Elevation data</label>
+        <select id="lidar" class="sel"><option value="none">Global elevation data (about 10-30 m)</option>
+          <option value="ea-dtm-1m">England: Environment Agency 1 m LiDAR terrain (DTM)</option>
+          <option disabled>Wales (not added yet)</option><option disabled>Scotland (not added yet)</option></select>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px"><button type="button" class="mini" id="lidarcheck" style="width:auto" hidden>Check this area</button><span class="hint" id="lidarmsg" style="margin:0"></span></div>
+        <span class="hint" id="lidarhint">LiDAR is measured ground height at 1 m, so small hills, banks and terraces appear. It is bare ground (buildings and trees removed). Where it has gaps the global data fills in.</span></div>
+      <div class="field"><label for="exaggeration">Vertical exaggeration <b id="v_exaggeration">1.5x</b></label>
+        <input type="range" id="exaggeration" min="0.5" max="5" step="0.1" value="1.5"></div>
+      <div class="field"><label for="base">Base thickness <b id="v_base">4 mm</b></label>
+        <input type="range" id="base" min="1" max="15" step="0.5" value="4"></div>
+    </div>
+  </details>
+
+  <!-- 4. COLOURS -->
+  <details class="card" open id="s4">
+    <summary><span class="n">4</span>Colours<span class="sub" id="sub4">4, satellite</span></summary>
+    <div class="body">
+      <div class="field"><label for="colours">Number of terrain colours <b id="v_colours">4</b></label>
+        <input type="range" id="colours" min="0" max="12" value="4">
+        <span class="hint" id="colourhint">Colours are grouped from the satellite imagery. 0 gives a plain single-material model.</span></div>
+      <div class="field"><div class="lab">Colour scheme</div>
+        <input type="hidden" id="scheme" value="satellite">
+        <div class="schemes" id="schemes"></div>
+        <span class="hint">Schemes keep the imagery's layout (which areas are alike) but repaint it by height. Picking one also sets matching colours for water, roads, buildings and the route; you can still change those below.</span></div>
+    </div>
+  </details>
+
+  <!-- 5. MAP FEATURES -->
+  <details class="card" id="s5">
+    <summary><span class="n">5</span>Map features &amp; markers<span class="sub" id="sub5">None</span></summary>
+    <div class="body">
+      <div class="sub-h">Features from OpenStreetMap</div>
+      <div class="checks">
+        <label><input type="checkbox" id="water"> Water <small>(lakes, ponds)</small>
+          <input type="color" id="water_colour" value="#3a78c2" class="push"></label>
+        <label><input type="checkbox" id="rivers"> Rivers <small>(rivers, canals, streams)</small>
+          <input type="color" id="river_colour" value="#3a78c2" class="push"></label>
+        <label><input type="checkbox" id="roads"> Roads
+          <input type="color" id="road_colour" value="#8a8a8a" class="push"></label>
+        <label><input type="checkbox" id="paths"> Footpaths <small>(paths, tracks, cycleways)</small>
+          <input type="color" id="path_colour" value="#a0764a" class="push"></label>
+        <label><input type="checkbox" id="buildings"> Buildings <small>(best for small areas)</small>
+          <input type="color" id="building_colour" value="#d6cfc4" class="push"></label>
+      </div>
+      <div class="sub-h">Points of interest</div>
+      <div id="pois"></div>
+      <button type="button" id="addpoi" class="mini">+ Add a point of interest</button>
+      <div class="checks field"><label><input type="checkbox" id="wp"> Put a marker on each waypoint in the GPX
+        <select id="wp_type" class="push"></select></label></div>
+      <span class="hint">Stylised icons (not to map scale), placed on a small flat spot. Enter a place name (looked up on OpenStreetMap) or latitude,longitude.</span>
+    </div>
+  </details>
+
+  <!-- 6. OUTPUT -->
+  <details class="card" id="s6">
+    <summary><span class="n">6</span>Output files<span class="sub" id="sub6">STL</span></summary>
+    <div class="body">
+      <div class="checks">
+        <label><input type="checkbox" id="threemf_parts"> 3MF with each colour as a separate part <small>(best for multi-colour slicers)</small></label>
+        <label><input type="checkbox" id="split"> One STL file per colour</label>
+        <label><input type="checkbox" id="threemf"> 3MF with painted colours <small>(single object)</small></label>
+      </div>
+      <span class="hint">An STL of the whole model is always made, with colours embedded when you use 2 or more.</span>
+    </div>
+  </details>
+
+  <!-- ADVANCED -->
+  <details class="card" id="s7">
+    <summary><span class="n" style="background:var(--muted)">+</span>Advanced<span class="sub">widths, smoothing, testing</span></summary>
+    <div class="body">
+      <div class="field"><label for="smooth">Terrain smoothing</label>
+        <select id="smooth" class="sel"><option value="">Auto (recommended)</option><option value="0">None (raw data)</option>
+          <option value="0.8">Light</option><option value="1.5">Medium</option><option value="3">Strong</option></select></div>
+      <div class="field"><label for="water_depth">Water depth <b id="v_water_depth">0.8 mm</b></label>
+        <input type="range" id="water_depth" min="0" max="3" step="0.1" value="0.8"></div>
+      <div class="field"><label for="road_width">Road width <b id="v_road_width">0.9 mm</b></label>
+        <input type="range" id="road_width" min="0.5" max="3" step="0.1" value="0.9"></div>
+      <div class="field"><label for="path_width">Footpath width <b id="v_path_width">0.6 mm</b></label>
+        <input type="range" id="path_width" min="0.3" max="2" step="0.1" value="0.6"></div>
+      <div class="field"><label for="river_width">River width <b id="v_river_width">1.0 mm</b></label>
+        <input type="range" id="river_width" min="0.5" max="4" step="0.1" value="1"></div>
+      <div class="field"><label for="trail_width">Route width <b id="v_trail_width">1.6 mm</b></label>
+        <input type="range" id="trail_width" min="0.5" max="5" step="0.1" value="1.6"></div>
+      <div class="field"><label for="trail_raise">Route raise <b id="v_trail_raise">0.6 mm</b></label>
+        <input type="range" id="trail_raise" min="0" max="2" step="0.1" value="0.6"></div>
+      <div class="checks field">
+        <label><input type="checkbox" id="sea"> Sea: treat areas at or below 0 m as water</label>
+        <label><input type="checkbox" id="clip_sea"> Flatten anything below sea level</label>
+        <label><input type="checkbox" id="synthetic"> Demo mode (fake terrain, no internet)</label>
+      </div>
+    </div>
+  </details>
+
+  <div class="actions">
+    <div id="prog" role="status" aria-live="polite">
+      <div class="proginfo"><b id="pct">0%</b><span id="pmsg">Starting...</span><em id="pel" style="color:var(--muted);font-style:normal;font-size:12px"></em><button type="button" id="cancel">Cancel</button></div>
+      <div class="barwrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="barwrap"><div class="bar" id="bar"></div></div>
+    </div>
+    <button class="go" id="go" type="submit" disabled>Generate model</button>
+    <div class="err" id="err" role="alert"></div>
+  </div>
+</form>
+
+<section class="panel viewpanel">
+  <div class="tabs">
+    <button type="button" id="tabfp" class="on">Footprint</button>
+    <button type="button" id="tab3d">3D view</button>
+    <button type="button" id="tabmap">Colour map</button>
+  </div>
+  <div id="fp"><canvas id="outline" width="960" height="540"></canvas><div id="outnote" class="hint" style="margin-top:6px"></div></div>
+  <div id="view" style="display:none"><div class="overlay" id="placeholder">Your model will appear here.</div></div>
+  <img id="mapimg" alt="Colour map preview">
+  <div id="results" hidden>
+    <p id="note"></p>
+    <div class="swatches" id="swatches"></div>
+
+    <h3>Downloads</h3>
+    <ul class="dl" id="dl"></ul>
+
+    <h3>This tile &amp; its neighbours</h3>
+    <dl class="tile" id="tileinfo"></dl>
+    <button type="button" class="link" id="copytile">Copy tile details</button>
+    <div class="hint" style="margin-top:8px">Want the next piece of the map? Pick a direction and the form is filled in with that tile's centre, size, shape, rotation and base elevation, so the pieces line up.</div>
+    <div class="nbrs" id="nbrs"></div>
+
+    <details class="plain"><summary>Log</summary><pre id="log"></pre></details>
+  </div>
+  <p class="credits" id="credits">Elevation: AWS Terrain Tiles. Imagery: Esri World Imagery. Water, rivers, roads, paths and buildings: &copy; OpenStreetMap contributors (ODbL).</p>
+</section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let gpxFile = null, running = false, currentJob = null;
+const CREDITS = 'Elevation: AWS Terrain Tiles. Imagery: Esri World Imagery. Water, rivers, roads, paths and buildings: &copy; OpenStreetMap contributors (ODbL).';
+const fire = (el, t='input') => el.dispatchEvent(new Event(t, {bubbles:true}));
+
+// ---- sliders show their values
+const fmt = {colours:v=>v==0?'none':v, size:v=>v+' mm', resolution:v=>v, exaggeration:v=>v+'x',
+             base:v=>v+' mm', rotate:v=>v+'°', corner_size:v=>v==0?'none':v+' mm', pad:v=>v+'%', trail_width:v=>v+' mm',
+             water_depth:v=>v+' mm', river_width:v=>v+' mm', road_width:v=>v+' mm', path_width:v=>v+' mm', trail_raise:v=>v+' mm'};
+for (const id in fmt){
+  const el = $(id), out = $('v_'+id);
+  const upd = () => { out.textContent = fmt[id](el.value); };
+  el.addEventListener('input', upd); upd();
+}
+
+// ---- segmented controls drive hidden inputs
+function setSeg(id, v){
+  $(id).value = v;
+  document.querySelectorAll(`.seg[data-for="${id}"] button`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  fire($(id), 'change');
+}
+document.querySelectorAll('.seg').forEach(seg => seg.querySelectorAll('button').forEach(b =>
+  b.addEventListener('click', () => setSeg(seg.dataset.for, b.dataset.v))));
+
+// ---- colour schemes
+let SCHEMES = {satellite:{label:'Satellite', ramp:null, colours:{water:'#3a78c2', river:'#3a78c2', road:'#8a8a8a', path:'#a0764a', building:'#d6cfc4', route:'#e8202a'}}};
+function rampCss(s){
+  if(!s.ramp) return 'linear-gradient(90deg,#5b7a3a,#8a8f5a,#b79a6a,#6e7f8a,#3f5f3a)';
+  return 'linear-gradient(90deg,' + s.ramp.join(',') + ')';
+}
+function renderSchemes(){
+  $('schemes').innerHTML = Object.entries(SCHEMES).map(([k,s]) =>
+    `<button type="button" class="scheme${$('scheme').value===k?' on':''}" data-k="${k}"><i style="background:${rampCss(s)}"></i>${s.label}</button>`).join('');
+  $('schemes').querySelectorAll('.scheme').forEach(b => b.onclick = () => pickScheme(b.dataset.k));
+}
+function pickScheme(k){
+  $('scheme').value = k; renderSchemes();
+  const c = SCHEMES[k].colours;
+  for(const [id,key] of [['water_colour','water'],['river_colour','river'],['road_colour','road'],['path_colour','path'],['building_colour','building'],['trail_colour','route']])
+    if(c[key]) $(id).value = c[key];
+  renderPlan(); summaries();
+}
+fetch('/api/schemes').then(r => r.json()).then(j => { SCHEMES = j; renderSchemes(); }).catch(() => renderSchemes());
+renderSchemes();
+$('colours').addEventListener('input', () => {
+  const v = +$('colours').value;
+  $('colourhint').textContent = v < 2 ? 'No colours: a plain single-material model.'
+    : 'Colours are grouped from the satellite imagery. 0 gives a plain single-material model.';
+  $('schemes').classList.toggle('off', v < 2); summaries();
+});
+
+// ---- LiDAR source
+fetch('/api/lidar-sources').then(r => r.json()).then(list => {
+  const keep = $('lidar').value;
+  const disabled = [...$('lidar').options].filter(o => o.disabled);
+  $('lidar').innerHTML = list.map(s => `<option value="${s.key}">${s.label}</option>`).join('');
+  disabled.forEach(o => $('lidar').appendChild(o)); $('lidar').value = keep;
+}).catch(() => {});
+function lidarChanged(){
+  const on = $('lidar').value !== 'none';
+  $('lidarcheck').hidden = !on; $('lidarmsg').textContent = '';
+  $('credits').innerHTML = CREDITS + (on ? ' Contains Environment Agency information &copy; Environment Agency and/or database right 2022 (Open Government Licence v3.0).' : '');
+  renderPlan(); summaries();
+}
+$('lidar').addEventListener('change', lidarChanged);
+$('lidarcheck').onclick = async () => {
+  if(!lastPlan) return;
+  $('lidarmsg').textContent = 'Checking...';
+  const fd = new FormData(); fd.append('source', $('lidar').value); fd.append('lat', lastPlan.centre[0]); fd.append('lon', lastPlan.centre[1]);
+  try{
+    const j = await (await fetch('/api/lidar-check', {method:'POST', body:fd})).json();
+    $('lidarmsg').textContent = (j.ok ? '✓ ' : '✗ ') + (j.message || j.error);
+  }catch(e){ $('lidarmsg').textContent = 'Could not reach the local server.'; }
+};
+
+// ---- points of interest
+const POI = {castle:'#b9b2a3', house:'#c9774f', tower:'#a8a8a8', church:'#d8d2c2', flag:'#e8202a', pin:'#ff3b30'};
+const typeOpts = Object.keys(POI).map(t => `<option value="${t}">${t[0].toUpperCase()+t.slice(1)}</option>`).join('');
+$('wp_type').innerHTML = typeOpts; $('wp_type').value = 'pin';
+function addPoi(){
+  if(document.querySelectorAll('.poi').length >= 10) return;
+  const row = document.createElement('div'); row.className = 'poi';
+  row.innerHTML = `<select class="t">${typeOpts}</select>
+    <input type="text" class="loc" placeholder="Place name or lat,lon" maxlength="120">
+    <input type="color" class="col" value="${POI.castle}">
+    <input type="number" class="size" min="0.5" max="3" step="0.1" value="1" title="Size multiplier">
+    <button type="button" title="Remove">&times;</button>`;
+  const sel = row.querySelector('.t'), col = row.querySelector('.col');
+  sel.onchange = () => { col.value = POI[sel.value]; };
+  row.querySelector('button').onclick = () => { row.remove(); summaries(); };
+  row.querySelector('.loc').addEventListener('input', summaries);
+  $('pois').appendChild(row);
+}
+$('addpoi').onclick = addPoi;
+function collectPois(){
+  return [...document.querySelectorAll('.poi')].map(r => ({
+    type: r.querySelector('.t').value, location: r.querySelector('.loc').value.trim(),
+    colour: r.querySelector('.col').value, size: r.querySelector('.size').value
+  })).filter(p => p.location);
+}
+
+// ---- fixed position helpers
+const CENTRE_RE = /^\s*(-?\d+(?:\.\d+)?)\s*[,;\s]\s*(-?\d+(?:\.\d+)?)\s*$/;
+function centreValue(){
+  const m = CENTRE_RE.exec($('centre').value);
+  if(!m) return null;
+  const la = +m[1], lo = +m[2];
+  return (Math.abs(la) <= 85 && Math.abs(lo) <= 180) ? `${la},${lo}` : null;
+}
+const isFixed = () => $('pos').value === 'fixed';
+function canGenerate(){
+  return !running && (isFixed() ? !!centreValue() && +$('width_m').value >= 100 : !!gpxFile);
+}
+function updateGo(){ $('go').disabled = !canGenerate(); }
+
+// ---- footprint plan: exact size, grid and outline from the server (same code as the generator)
+let lastPlan = null, planTimer = null, planCtl = null;
+function shapeParams(){
+  const p = [['shape', $('shape').value],
+          ['ratio', $('ratio').value==='custom' ? ($('ratio_custom').value.trim() || 'auto') : $('ratio').value],
+          ['portrait', $('portrait').checked ? '1' : ''],
+          ['rotate', ($('rotate_auto').checked && !isFixed()) ? 'auto' : $('rotate').value],
+          ['corner_style', $('corner_style').value], ['corner_size', $('corner_size').value]];
+  if(isFixed() && centreValue()){ p.push(['centre', centreValue()], ['width_m', $('width_m').value]); }
+  return p.filter(x => x[1] !== '');
+}
+function schedulePlan(){ clearTimeout(planTimer); planTimer = setTimeout(runPlan, 250); }
+async function runPlan(){
+  if(planCtl) planCtl.abort();
+  if(isFixed() && !(centreValue() && +$('width_m').value >= 100)){
+    $('esthint').textContent = 'Enter a centre (latitude, longitude) and a width in metres.'; return;
+  }
+  planCtl = new AbortController();
+  const fd = new FormData();
+  if(gpxFile) fd.append('gpx', gpxFile);
+  for(const [k,v] of shapeParams()) fd.append(k, v);
+  fd.append('resolution', $('resolution').value); fd.append('size', $('size').value); fd.append('pad', $('pad').value/100);
+  try{
+    const r = await fetch('/api/plan', {method:'POST', body:fd, signal:planCtl.signal});
+    const j = await r.json();
+    if(!r.ok) throw new Error(j.error || 'Could not plan the layout');
+    lastPlan = j; renderPlan();
+  }catch(e){
+    if(e.name !== 'AbortError') $('esthint').textContent = e.message;
+  }
+}
+function renderPlan(){
+  const j = lastPlan; if(!j) return;
+  const fixed = isFixed(), auto = $('rotate_auto').checked && !fixed;
+  $('rotate').disabled = auto; $('autorow').style.display = fixed ? 'none' : '';
+  if(auto){ $('rotate').value = Math.round(j.theta); $('v_rotate').textContent = 'auto: ' + Math.round(j.theta) + '°'; }
+  else $('v_rotate').textContent = $('rotate').value + '°';
+  const res = +$('resolution').value, mb = (84 + 50*j.tris)/1e6, longM = Math.max(j.W_m, j.H_m), cm = j.cell_m;
+  let t = (j.nominal ? 'Example area (choose a GPX file for exact numbers): ' : '') +
+    `${j.nxc} x ${j.nyc} cells, about ${(j.tris/1e6).toFixed(2)} million triangles (${mb.toFixed(0)} MB per STL). ` +
+    `Each cell is ${j.cell_mm.toFixed(2)} mm on the model, ${cm<10 ? cm.toFixed(1) : cm.toFixed(0)} m on the ground.`;
+  const hints = [];
+  if($('buildings').checked && cm>20) hints.push(`Buildings need cells under 20 m: raise detail to about ${Math.ceil(longM/20)} or use a smaller area.`);
+  const lid = $('lidar').value !== 'none', inEng = j.lidar_range && j.lidar_range['ea-dtm-1m'];
+  if(lid && j.lidar_range && !j.lidar_range[$('lidar').value]) hints.push('This area is outside the LiDAR source (England), so the global elevation data will be used.');
+  else if(lid && cm>6) hints.push(`LiDAR shows most when cells are under about 5 m; yours are ${cm.toFixed(0)} m. Use a smaller area or higher detail to see the difference.`);
+  if(cm<8 && !lid && inEng) hints.push('This area is in England: try the LiDAR elevation data below for real terrain detail.');
+  if(cm<8 && !lid && !inEng) hints.push('Finer than the elevation data (about 10-30 m): terrain shape stops improving, but colours, roads, paths and buildings keep getting sharper.');
+  if(j.cell_mm<0.2) hints.push('Under 0.2 mm per cell is finer than most FDM printers can print (fine for resin).');
+  if(($('split').checked||$('threemf_parts').checked) && j.tris>1e6) hints.push('Per-colour files add roughly the same size again.');
+  if(j.tris>3e6) hints.push('The 3D view will show a lighter version of this model; the downloads are full detail.');
+  if(mb>150) hints.push(`Files this big (about ${mb.toFixed(0)} MB) can be slow to slice; 700 cells is usually plenty.`);
+  $('est').textContent = t; $('esthint').textContent = hints.join(' ');
+  $('outnote').textContent = `Centre ${j.centre[0].toFixed(5)}, ${j.centre[1].toFixed(5)}. Area ${(j.W_m/1000).toFixed(2)} x ${(j.H_m/1000).toFixed(2)} km on the ground` +
+    (j.size_mm ? `, ${j.size_mm[0].toFixed(0)} x ${j.size_mm[1].toFixed(0)} mm on the model` : '') +
+    (auto ? `, rotated ${Math.round(j.theta)}° to fit` : '') + '.';
+  document.querySelectorAll('#presets button').forEach(b => b.classList.toggle('on', +b.dataset.res===res));
+  drawOutline(j); summaries();
+}
+function drawOutline(j){
+  const c = $('outline'), g = c.getContext('2d'), css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#2f6b4f', ink = css.getPropertyValue('--ink').trim() || '#222';
+  const W = c.width, H = c.height, pad = 40, [wm, hm] = j.size_mm;
+  g.clearRect(0, 0, W, H);
+  const sc = Math.min((W-2*pad)/wm, (H-2*pad)/hm), ox = (W - wm*sc)/2, oy = (H - hm*sc)/2;
+  const P = ([x,y]) => [ox + x*wm*sc, oy + y*hm*sc];
+  g.beginPath(); j.outline.forEach((p,i) => { const [x,y] = P(p); i ? g.lineTo(x,y) : g.moveTo(x,y); }); g.closePath();
+  g.globalAlpha = .16; g.fillStyle = accent; g.fill(); g.globalAlpha = 1;
+  g.lineWidth = 3; g.strokeStyle = accent; g.lineJoin = 'round'; g.stroke();
+  g.lineWidth = 4; g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = $('trail_colour').value;
+  for(const route of j.route){ g.beginPath(); route.forEach((p,i) => { const [x,y] = P(p); i ? g.lineTo(x,y) : g.moveTo(x,y); }); g.stroke(); }
+  g.fillStyle = $('trail_colour').value;
+  for(const p of j.waypoints){ const [x,y] = P(p); g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill(); }
+  // north arrow (the top edge faces bearing theta, so north points -theta from "up")
+  const th = j.theta*Math.PI/180, dx = -Math.sin(th), dy = -Math.cos(th), cx = 44, cy = 44, r = 24;
+  g.strokeStyle = ink; g.fillStyle = ink; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(cx - dx*r, cy - dy*r); g.lineTo(cx + dx*r, cy + dy*r); g.stroke();
+  g.beginPath(); g.moveTo(cx + dx*r, cy + dy*r);
+  g.lineTo(cx + dx*r*.35 - dy*9, cy + dy*r*.35 + dx*9); g.lineTo(cx + dx*r*.35 + dy*9, cy + dy*r*.35 - dx*9); g.closePath(); g.fill();
+  g.font = 'bold 20px system-ui,sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('N', cx + dx*(r+16), cy + dy*(r+16));
+}
+document.querySelectorAll('#presets button').forEach(b => b.onclick = () => { $('resolution').value = b.dataset.res; fire($('resolution')); });
+for(const id of ['shape','pos','ratio','ratio_custom','portrait','rotate','rotate_auto','corner_style','corner_size','resolution','size','pad','centre','width_m']){
+  $(id).addEventListener('input', schedulePlan); $(id).addEventListener('change', schedulePlan);
+}
+$('ratio').addEventListener('change', () => { $('ratio_custom').hidden = $('ratio').value !== 'custom'; });
+$('corner_style').addEventListener('change', () => {          // picking a style with no size would do nothing
+  if($('corner_style').value !== 'sharp' && +$('corner_size').value === 0){ $('corner_size').value = 8; fire($('corner_size')); }
+});
+$('corner_size').addEventListener('input', () => {            // dragging the size implies a style, and 0 means sharp
+  if(+$('corner_size').value > 0 && $('corner_style').value === 'sharp') $('corner_style').value = 'fillet';
+  if(+$('corner_size').value === 0) $('corner_style').value = 'sharp';
+});
+$('shape').addEventListener('change', () => {
+  const circ = $('shape').value === 'circle';
+  $('cornerrow').style.display = circ ? 'none' : '';
+  $('shapehint').textContent = circ ? 'A circle has no corners. Use a ratio other than 1:1 for an oval.'
+    : $('shape').value === 'hexagon' ? 'The hexagon is flat-topped; rotate by 30° or 90° to point a corner at the top.' : '';
+  summaries();
+});
+$('pos').addEventListener('change', () => {
+  const fixed = isFixed();
+  $('fixedbox').hidden = !fixed;
+  if(fixed && lastPlan){                                      // start from the area currently shown, so it can be nudged
+    if(!centreValue()) $('centre').value = `${lastPlan.centre[0]}, ${lastPlan.centre[1]}`;
+    if(!$('width_m').value) $('width_m').value = Math.round(lastPlan.W_m);
+    if($('rotate_auto').checked){ $('rotate').value = Math.round(lastPlan.theta); $('rotate_auto').checked = false; fire($('rotate')); }
+    if($('ratio').value === 'auto'){ $('ratio').value = '1:1'; fire($('ratio'), 'change'); }
+  }
+  updateGo(); summaries();
+});
+for(const id of ['centre','width_m']) $(id).addEventListener('input', updateGo);
+for(const id of ['buildings','split','threemf_parts']) $(id).addEventListener('change', renderPlan);
+$('trail_colour').addEventListener('input', renderPlan);
+
+// ---- step summaries (shown on the right of each heading)
+function summaries(){
+  const sh = {rectangle:'Rectangle', hexagon:'Hexagon', circle:'Circle'}[$('shape').value];
+  $('sub1').textContent = gpxFile ? gpxFile.name : (isFixed() ? 'Not needed (fixed position)' : 'No file yet');
+  $('sub2').textContent = sh + (isFixed() ? ', fixed position' : '') + (lastPlan ? `, ${(lastPlan.W_m/1000).toFixed(1)} x ${(lastPlan.H_m/1000).toFixed(1)} km` : '');
+  $('sub3').textContent = `${$('size').value} mm, ${$('resolution').value} cells` + ($('lidar').value !== 'none' ? ', LiDAR' : '');
+  const n = +$('colours').value;
+  $('sub4').textContent = n < 2 ? 'None' : `${n}, ${(SCHEMES[$('scheme').value]||{label:''}).label.toLowerCase()}`;
+  const f = ['water','rivers','roads','paths','buildings'].filter(id => $(id).checked);
+  const pn = collectPois().length + ($('wp').checked ? 1 : 0);
+  $('sub5').textContent = (f.length ? f.join(', ') : 'No features') + (pn ? `, ${pn} marker${pn>1?'s':''}` : '');
+  const o = ['threemf_parts','split','threemf'].filter(id => $(id).checked).length;
+  $('sub6').textContent = 'STL' + (o ? ` + ${o} more` : '');
+}
+for(const id of ['size','resolution','colours','water','rivers','roads','paths','buildings','wp','threemf_parts','split','threemf'])
+  $(id).addEventListener('input', summaries), $(id).addEventListener('change', summaries);
+summaries(); runPlan();
+
+// ---- file picking
+const drop = $('drop');
+drop.onclick = () => $('file').click();
+['dragenter','dragover'].forEach(e => drop.addEventListener(e, ev => {ev.preventDefault(); drop.classList.add('over');}));
+['dragleave','drop'].forEach(e => drop.addEventListener(e, ev => {ev.preventDefault(); drop.classList.remove('over');}));
+drop.addEventListener('drop', ev => setFile(ev.dataTransfer.files[0]));
+$('file').onchange = ev => setFile(ev.target.files[0]);
+function setFile(f){
+  if(!f) return;
+  if(!f.name.toLowerCase().endsWith('.gpx')){ $('err').textContent='That is not a .gpx file.'; return; }
+  gpxFile = f; $('fname').textContent = f.name; $('fhint').textContent = (f.size/1024).toFixed(0)+' KB';
+  $('err').textContent=''; updateGo(); summaries(); runPlan();
+}
+
+// ---- tabs
+function showTab(which){
+  $('tabfp').classList.toggle('on', which==='fp'); $('tab3d').classList.toggle('on', which==='3d'); $('tabmap').classList.toggle('on', which==='map');
+  $('fp').style.display = which==='fp' ? 'block' : 'none';
+  $('view').style.display = which==='3d' ? 'block' : 'none';
+  $('mapimg').style.display = which==='map' ? 'block' : 'none';
+  if(which==='3d') resize();
+}
+$('tabfp').onclick = () => showTab('fp'); $('tab3d').onclick = () => showTab('3d'); $('tabmap').onclick = () => showTab('map');
+showTab('fp');
+
+// ---- three.js viewer
+const view = $('view');
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+view.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 5000);
+camera.up.set(0,0,1);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+scene.add(new THREE.HemisphereLight(0xffffff, 0x666666, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(-1,-1.2,2); scene.add(sun);
+let mesh = null;
+function resize(){
+  const w = view.clientWidth, h = view.clientHeight; if(!w||!h) return;
+  renderer.setSize(w,h,false); camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(view); resize();
+(function loop(){ requestAnimationFrame(loop); controls.update(); renderer.render(scene,camera); })();
+
+function parseSTL(buf, coloured){
+  const dv = new DataView(buf), n = dv.getUint32(80,true);
+  const pos = new Float32Array(n*9), col = new Uint8Array(n*9);
+  for(let i=0;i<n;i++){
+    const o = 84+i*50, a = dv.getUint16(o+48,true);
+    const r=Math.round((a&31)*255/31), g=Math.round(((a>>5)&31)*255/31), b=Math.round(((a>>10)&31)*255/31);
+    for(let k=0;k<3;k++){
+      for(let c=0;c<3;c++) pos[i*9+k*3+c] = dv.getFloat32(o+12+k*12+c*4,true);
+      if(coloured){ col[i*9+k*3]=r; col[i*9+k*3+1]=g; col[i*9+k*3+2]=b; }
+      else { col[i*9+k*3]=col[i*9+k*3+1]=col[i*9+k*3+2]=184; }
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col,3,true));
+  return geo;
+}
+function clearMesh(){
+  if(mesh){ scene.remove(mesh); mesh.geometry.dispose(); mesh.material.dispose(); mesh = null; }
+}
+async function showModel(url, coloured, tris){
+  clearMesh();                                  // never leave the previous model on screen
+  if(tris > 3000000){                           // too heavy for the browser: say so instead of showing nothing
+    $('placeholder').textContent = `This model has ${(tris/1e6).toFixed(1)} million triangles, too many for the 3D view. Use the downloads, or the colour map tab.`;
+    $('placeholder').style.display = 'flex';
+    return tris;
+  }
+  const buf = await (await fetch(url)).arrayBuffer();
+  const geo = parseSTL(buf, coloured);
+  mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({vertexColors:true, roughness:.92, metalness:0, flatShading:true}));
+  geo.computeBoundingBox();
+  const c = new THREE.Vector3(); geo.boundingBox.getCenter(c);
+  mesh.position.sub(c); scene.add(mesh);
+  const size = geo.boundingBox.getSize(new THREE.Vector3()).length();
+  camera.position.set(0, -size*0.9, size*0.75);
+  controls.target.set(0,0,0); controls.update();
+  $('placeholder').style.display = 'none';
+  return 0;
+}
+
+// ---- tile data and neighbours
+let lastTile = null;
+const COMPASS = ['N','NE','E','SE','S','SW','W','NW'];
+const compass = b => COMPASS[Math.round(b/45) % 8];
+const GRID = {'Top left':[1,1],'Top':[1,2],'Top right':[1,3],'Left':[2,1],'Right':[2,3],'Bottom left':[3,1],'Bottom':[3,2],'Bottom right':[3,3],
+              'Upper left':[1,1],'Upper right':[1,3],'Lower left':[3,1],'Lower right':[3,3]};
+function renderTile(t){
+  lastTile = t;
+  $('tileinfo').innerHTML =
+    `<dt>Centre</dt><dd>${t.centre.lat}, ${t.centre.lon}</dd>` +
+    `<dt>Ground size</dt><dd>${Math.round(t.width_m)} x ${Math.round(t.height_m)} m</dd>` +
+    `<dt>Rotation</dt><dd>${t.rotation}° (top edge faces ${compass((t.rotation+360)%360)})</dd>` +
+    `<dt>Base elevation</dt><dd>${t.base_elev_m} m (highest point ${t.max_elev_m} m)</dd>`;
+  $('nbrs').innerHTML = '<div class="me" style="grid-row:2;grid-column:2">This tile</div>' + t.neighbours.map(n => {
+    const [r,c] = GRID[n.name] || [2,2];
+    return `<button type="button" data-n="${n.name}" style="grid-row:${r};grid-column:${c}" title="${n.lat}, ${n.lon}">${n.name}<small>${compass(n.bearing)}</small></button>`;
+  }).join('');
+  $('nbrs').querySelectorAll('button').forEach(b => b.onclick = () => useNeighbour(t.neighbours.find(n => n.name === b.dataset.n)));
+}
+function useNeighbour(n){
+  const t = lastTile; if(!t || !n) return;
+  setSeg('shape', t.shape);
+  setSeg('pos', 'fixed'); if(t.lidar){ $('lidar').value = t.lidar; lidarChanged(); }
+  $('centre').value = `${n.lat}, ${n.lon}`;
+  $('width_m').value = t.width_m;
+  $('base_elev').value = t.base_elev_m;
+  $('ratio').value = 'custom'; $('ratio_custom').value = String(t.ratio); $('ratio_custom').hidden = false;
+  $('portrait').checked = false;
+  $('rotate_auto').checked = false; $('rotate').value = Math.round(t.rotation); fire($('rotate'));
+  $('corner_style').value = t.corner_style; $('corner_size').value = t.corner_size; fire($('corner_size'));
+  $('corner_style').value = t.corner_style;
+  for(const [id,v] of [['size',t.size_mm],['resolution',t.resolution],['exaggeration',t.vertical_exaggeration],['base',t.base_mm]]){ $(id).value = v; fire($(id)); }
+  $('s2').open = true; $('s2').scrollIntoView({behavior:'smooth', block:'start'});
+  $('err').textContent = ''; updateGo(); runPlan(); showTab('fp');
+  $('note').textContent = `Form set up for the tile ${n.name.toLowerCase()} of the last one. Check the footprint, then press Generate.`;
+}
+$('copytile').onclick = async () => {
+  if(!lastTile) return;
+  const t = lastTile;
+  const text = `centre: ${t.centre.lat}, ${t.centre.lon}\nwidth_m: ${t.width_m}\nheight_m: ${t.height_m}\nrotation: ${t.rotation}\nshape: ${t.shape}\nratio: ${t.ratio}\nbase_elev_m: ${t.base_elev_m}\nsize_mm: ${t.size_mm}\nresolution: ${t.resolution}`;
+  try{ await navigator.clipboard.writeText(text); $('copytile').textContent = 'Copied'; }
+  catch(e){ $('copytile').textContent = 'Could not copy'; }
+  setTimeout(() => { $('copytile').textContent = 'Copy tile details'; }, 1500);
+};
+
+// ---- generate, with live progress
+const kb = n => n>1e6 ? (n/1e6).toFixed(1)+' MB' : Math.round(n/1e3)+' KB';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const clock = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+function showProgress(st){
+  const p = Math.max(0, Math.min(100, st.pct || 0));
+  $('pct').textContent = p + '%'; $('bar').style.width = p + '%'; $('barwrap').setAttribute('aria-valuenow', p);
+  $('pmsg').textContent = st.message || ''; $('pel').textContent = clock(st.elapsed || 0);
+  $('placeholder').textContent = `Working... ${p}%\n${st.message || ''}`;
+}
+async function pollJob(id){
+  let fails = 0;
+  for(;;){
+    await sleep(600);
+    if(currentJob !== id) return null;
+    let st;
+    try{
+      const r = await fetch('/api/status/' + id);
+      if(!r.ok) throw new Error('status ' + r.status);
+      st = await r.json(); fails = 0;
+    }catch(e){
+      if(++fails > 8) throw new Error('Lost contact with the local server. Is app.py still running?');
+      continue;
+    }
+    showProgress(st);
+    if(st.state === 'done') return st;
+    if(st.state === 'error') throw new Error(st.error + (st.log ? '\n\n' + st.log : ''));
+    if(st.state === 'cancelled') return null;
+  }
+}
+$('cancel').onclick = async () => {
+  if(!currentJob) return;
+  const id = currentJob; currentJob = null;
+  try{ await fetch('/api/cancel/' + id, {method:'POST'}); }catch(e){}
+  endRun(); $('placeholder').textContent = 'Cancelled.'; $('err').textContent = 'Cancelled.';
+};
+function endRun(){
+  running = false; $('prog').classList.remove('on'); $('go').style.display = ''; $('go').textContent = 'Generate model'; updateGo();
+}
+$('form').addEventListener('submit', async ev => {
+  ev.preventDefault(); if(!canGenerate()) return;
+  const fd = new FormData();
+  if(gpxFile) fd.append('gpx', gpxFile);
+  for(const id of ['colours','size','resolution','exaggeration','base','water_depth','river_width','road_width','path_width','trail_width','trail_raise','trail_colour','water_colour','river_colour','road_colour','path_colour','building_colour','scheme','lidar'])
+    fd.append(id, $(id).value);
+  fd.append('pad', $('pad').value/100);
+  if($('smooth').value !== '') fd.append('smooth', $('smooth').value);
+  if(isFixed() && $('base_elev').value !== '') fd.append('base_elev', $('base_elev').value);
+  for(const id of ['water','rivers','roads','paths','buildings','sea','threemf','threemf_parts','split','clip_sea','synthetic']) if($(id).checked) fd.append(id,'1');
+  if(!$('trail').checked) fd.append('no_trail','1');
+  for(const [k,v] of shapeParams()) fd.append(k, v);
+  fd.append('pois', JSON.stringify(collectPois()));
+  if($('wp').checked) fd.append('waypoint_poi', $('wp_type').value);
+
+  running = true; $('go').style.display = 'none'; $('prog').classList.add('on');
+  showProgress({pct:0, message:'Starting...', elapsed:0});
+  $('err').textContent = ''; $('results').hidden = true; clearMesh(); $('note').textContent = '';
+  $('placeholder').style.display = 'flex'; showTab('3d');
+  try{
+    const r = await fetch('/api/generate', {method:'POST', body:fd});
+    const j = await r.json();
+    if(!r.ok) throw new Error((j.error||'Failed') + (j.log ? '\n\n'+j.log : ''));
+    currentJob = j.job;
+    const st = await pollJob(j.job);
+    if(!st) return;                                            // cancelled
+    const model = st.files.find(f=>f.kind==='model'), prev = st.files.find(f=>f.kind==='preview');
+    const lite = st.files.find(f=>f.kind==='viewmesh'), shown = lite || model;
+    const skipped = await showModel(shown.url, st.coloured, Math.round((shown.size-84)/50));
+    $('note').textContent = skipped ? 'This model is too large for the in-browser 3D view. The files are ready to download, and the colour map is shown instead.'
+      : lite ? 'The 3D view shows a lighter version of this model so it stays smooth. The downloads are the full-detail files.' : '';
+    if(prev) $('mapimg').src = prev.url + '?t=' + Date.now();
+    $('dl').innerHTML = st.files.filter(f=>f.kind!=='preview' && f.kind!=='viewmesh').map(f =>
+      `<li><a href="${f.url}?dl=1" download><b>${f.name}</b><span>${kb(f.size)}</span></a></li>`).join('');
+    const pal = (st.log.match(/Palette: (.*)/)||[])[1];
+    $('swatches').innerHTML = pal ? pal.split(', ').map(h=>`<i style="background:${h}" title="${h}"></i>`).join('') : '';
+    if(st.tile) renderTile(st.tile);
+    $('log').textContent = st.log; $('results').hidden = false; showTab(skipped ? 'map' : '3d');
+  }catch(e){
+    $('err').textContent = e.message; $('placeholder').textContent = 'Something went wrong. See the message by the Generate button.';
+  }finally{
+    currentJob = null; endRun();
+  }
+});
+</script>
+</body>
+</html>
