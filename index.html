@@ -286,7 +286,32 @@
         <label><input type="checkbox" id="split"> One STL file per colour</label>
         <label><input type="checkbox" id="threemf"> 3MF with painted colours <small>(single object)</small></label>
       </div>
+      <div class="field"><label for="skin_mode">Colour parts (for the per-colour files above)</label>
+        <select id="skin_mode" class="sel"><option value="full">Full height: each colour goes all the way down</option>
+          <option value="thin">Thin colour layer on one plain base (fewer colour changes)</option></select>
+        <div id="skinbox" hidden style="margin-top:8px"><label for="skin">Colour layer thickness <b id="v_skin">1.2 mm</b></label>
+          <input type="range" id="skin" min="0.4" max="3" step="0.2" value="1.2">
+          <span class="hint">The base is made in the most common colour, so one filament does both jobs.</span></div></div>
+      <div class="checks field"><label><input type="checkbox" id="surface_obj"> Top surface only, with colours (OBJ, for Blender and renderers)</label></div>
       <span class="hint">An STL of the whole model is always made, with colours embedded when you use 2 or more.</span>
+
+      <div class="sub-h">Minecraft</div>
+      <div class="field"><label for="minecraft">Minecraft map</label>
+        <select id="minecraft" class="sel"><option value="none">None</option>
+          <option value="java">Java Edition (.schem schematic)</option>
+          <option value="bedrock">Bedrock Edition (.mcpack of structure tiles)</option></select>
+        <div id="mcbox" hidden>
+          <div class="row2" style="margin-top:10px">
+            <div><label class="lab" for="mc_size">Size in blocks (longest side)</label>
+              <input type="number" id="mc_size" class="txt" min="32" max="1000" step="1" placeholder="auto"></div>
+            <div id="mcverbox"><label class="lab" for="mc_version">Java version</label>
+              <select id="mc_version" class="sel"><option value="1.20">1.20 or newer</option><option value="1.21">1.21 or newer</option>
+                <option value="1.19">1.19</option><option value="1.18">1.18</option><option value="1.17">1.17</option></select></div>
+          </div>
+          <span class="hint" id="mchint"></span>
+          <span class="hint" id="mchow"></span>
+        </div>
+      </div>
     </div>
   </details>
 
@@ -409,6 +434,19 @@ $('colours').addEventListener('input', () => {
   $('schemes').classList.toggle('off', v < 2); summaries();
 });
 
+// ---- output options
+$('skin_mode').addEventListener('change', () => { $('skinbox').hidden = $('skin_mode').value !== 'thin'; summaries(); });
+$('skin').addEventListener('input', () => { $('v_skin').textContent = $('skin').value + ' mm'; });
+$('minecraft').addEventListener('change', () => {
+  const m = $('minecraft').value;
+  $('mcbox').hidden = m === 'none'; $('mcverbox').style.display = m === 'java' ? '' : 'none';
+  $('mchow').textContent = m === 'java'
+    ? 'Load it with WorldEdit: put the file in plugins/WorldEdit/schematics (or config/worldedit/schematics), then //schem load NAME and //paste. Litematica can open it too.'
+    : m === 'bedrock' ? 'Experimental. Import the .mcpack, add it to a world as a behaviour pack, then run the /structure load lines from the included text file. If it will not load, make the Java version and convert it with Amulet.' : '';
+  renderPlan(); summaries();
+});
+$('mc_size').addEventListener('input', () => renderPlan());
+
 // ---- LiDAR source
 fetch('/api/lidar-sources').then(r => r.json()).then(list => {
   const keep = $('lidar').value;
@@ -525,6 +563,11 @@ function renderPlan(){
   if(($('split').checked||$('threemf_parts').checked) && j.tris>1e6) hints.push('Per-colour files add roughly the same size again.');
   if(j.tris>3e6) hints.push('The 3D view will show a lighter version of this model; the downloads are full detail.');
   if(mb>150) hints.push(`Files this big (about ${mb.toFixed(0)} MB) can be slow to slice; 700 cells is usually plenty.`);
+  if($('minecraft').value !== 'none'){
+    const blocks = +$('mc_size').value || Math.min(Math.max(j.nxc, j.nyc), 400), g = longM / blocks;
+    $('mchint').textContent = `Map about ${blocks} blocks across: one block is about ${g<10 ? g.toFixed(1) : g.toFixed(0)} m. Heights follow the vertical exaggeration, squeezed if they would exceed Minecraft's height limit.` +
+      (+$('colours').value < 2 ? ' Choose 2 or more terrain colours to get coloured blocks.' : '') + ' Markers are not included.';
+  }
   $('est').textContent = t; $('esthint').textContent = hints.join(' ');
   $('outnote').textContent = `Centre ${j.centre[0].toFixed(5)}, ${j.centre[1].toFixed(5)}. Area ${(j.W_m/1000).toFixed(2)} x ${(j.H_m/1000).toFixed(2)} km on the ground` +
     (j.size_mm ? `, ${j.size_mm[0].toFixed(0)} x ${j.size_mm[1].toFixed(0)} mm on the model` : '') +
@@ -600,10 +643,10 @@ function summaries(){
   const f = ['water','rivers','roads','paths','buildings'].filter(id => $(id).checked);
   const pn = collectPois().length + ($('wp').checked ? 1 : 0);
   $('sub5').textContent = (f.length ? f.join(', ') : 'No features') + (pn ? `, ${pn} marker${pn>1?'s':''}` : '');
-  const o = ['threemf_parts','split','threemf'].filter(id => $(id).checked).length;
+  const o = ['threemf_parts','split','threemf','surface_obj'].filter(id => $(id).checked).length + ($('minecraft').value !== 'none' ? 1 : 0);
   $('sub6').textContent = 'STL' + (o ? ` + ${o} more` : '');
 }
-for(const id of ['size','resolution','colours','water','rivers','roads','paths','buildings','wp','threemf_parts','split','threemf'])
+for(const id of ['size','resolution','colours','water','rivers','roads','paths','buildings','wp','threemf_parts','split','threemf','surface_obj'])
   $(id).addEventListener('input', summaries), $(id).addEventListener('change', summaries);
 summaries(); runPlan();
 
@@ -780,12 +823,14 @@ $('form').addEventListener('submit', async ev => {
   ev.preventDefault(); if(!canGenerate()) return;
   const fd = new FormData();
   if(gpxFile) fd.append('gpx', gpxFile);
-  for(const id of ['colours','size','resolution','exaggeration','base','water_depth','river_width','road_width','path_width','trail_width','trail_raise','trail_colour','water_colour','river_colour','road_colour','path_colour','building_colour','scheme','lidar'])
+  for(const id of ['colours','size','resolution','exaggeration','base','water_depth','river_width','road_width','path_width','trail_width','trail_raise','trail_colour','water_colour','river_colour','road_colour','path_colour','building_colour','scheme','lidar','minecraft','mc_version'])
     fd.append(id, $(id).value);
+  if($('minecraft').value !== 'none' && $('mc_size').value) fd.append('mc_size', $('mc_size').value);
+  fd.append('skin_mode', $('skin_mode').value); fd.append('skin', $('skin').value);
   fd.append('pad', $('pad').value/100);
   if($('smooth').value !== '') fd.append('smooth', $('smooth').value);
   if(isFixed() && $('base_elev').value !== '') fd.append('base_elev', $('base_elev').value);
-  for(const id of ['water','rivers','roads','paths','buildings','sea','threemf','threemf_parts','split','clip_sea','synthetic']) if($(id).checked) fd.append(id,'1');
+  for(const id of ['water','rivers','roads','paths','buildings','sea','threemf','threemf_parts','split','clip_sea','synthetic','surface_obj']) if($(id).checked) fd.append(id,'1');
   if(!$('trail').checked) fd.append('no_trail','1');
   for(const [k,v] of shapeParams()) fd.append(k, v);
   fd.append('pois', JSON.stringify(collectPois()));

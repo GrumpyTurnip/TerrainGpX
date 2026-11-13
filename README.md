@@ -87,6 +87,18 @@ global elevation data. It covers roughly 99% of England, is free under the Open 
 - Attribution: Contains Environment Agency information (c) Environment Agency and/or database right 2022.
 - More regions (Wales, Scotland) can be added as extra entries in `LIDAR_SOURCES`.
 
+## Thin colour layer, surface-only OBJ and Minecraft
+- `--skin MM` (with `--split` / `--3mf-parts`): each colour becomes only the top MM millimetres, and one plain base (in the most common colour,
+  so one filament does both jobs) fills the rest. Far fewer colour changes when printing. Parts share exact faces and stay watertight.
+- `--surface-obj`: the top surface only (no walls or underside) as `.obj` + `.mtl`, one material per colour, Z up, millimetres. For Blender and renderers.
+- `--minecraft java|bedrock` (needs `mc_export.py` next to `gpx2stl.py`): one block per grid cell by default (`--mc-size` sets the size in blocks, up to 1000).
+  Heights keep your vertical exaggeration relative to the block size, squeezed if they would pass Minecraft's height limit. Colours become the nearest block
+  (natural blocks for satellite colours, concrete as well for the colour schemes). Water and rivers become water, buildings become raised blocks. Markers are not included.
+  - **Java**: `<name>_minecraft_java.schem` (Sponge schematic v2). Put it in WorldEdit's `schematics` folder, then `//schem load NAME` and `//paste`. `--mc-version` picks the data version (1.20 default works in newer versions too).
+  - **Bedrock (experimental)**: `<name>_bedrock.mcpack` holds 64 x 64 block `.mcstructure` tiles, and `<name>_bedrock_commands.txt` lists the `/structure load` lines that join them.
+    Both formats were checked by reading them back with an independent NBT library, but not loaded in the game.
+    If Bedrock will not load them, use the Java file and convert it with Amulet.
+
 ## Web resources used
 - Elevation: AWS Terrain Tiles (s3.amazonaws.com/elevation-tiles-prod/terrarium); optional LiDAR from environment.data.gov.uk (England)
 - Imagery: Esri World Imagery (server.arcgisonline.com)

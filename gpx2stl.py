@@ -36,7 +36,8 @@ TERRARIUM_URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}
 ESRI_URL = ("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/"
             "MapServer/tile/{z}/{y}/{x}")
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter",
-                 "https://overpass.kumi.systems/api/interpreter"]
+                 "https://overpass.kumi.systems/api/interpreter",
+                 "https://overpass.private.coffee/api/interpreter"]
 USER_AGENT = "gpx2stl/1.0 (personal terrain model generator)"
 
 
@@ -767,39 +768,67 @@ ROAD_WIDTH_FACTOR = {"motorway": 1.6, "trunk": 1.6, "primary": 1.5, "secondary":
 
 
 def fetch_osm(bbox, water, rivers, buildings, cache_dir, roads=False, paths=False):
-    """Download water, waterways and buildings for the bbox from the Overpass API (cached)."""
+    """Download water, waterways, roads, paths and buildings for the bbox from the Overpass API (cached).
+    Each kind is fetched separately, so one busy answer only costs that layer, and the progress bar says what is happening."""
     import requests
     bb = f"{bbox[0]:.5f},{bbox[2]:.5f},{bbox[1]:.5f},{bbox[3]:.5f}"
-    parts = []
+    groups = []
+    wr = []
     if water:
-        parts += [f'way["natural"="water"]({bb});', f'relation["natural"="water"]({bb});']
+        wr += [f'way["natural"="water"]({bb});', f'relation["natural"="water"]({bb});']
     if rivers:
-        parts += [f'way["waterway"~"^(river|stream|canal)$"]({bb});']
-    if buildings:
-        parts += [f'way["building"]({bb});', f'relation["building"]({bb});']
+        wr += [f'way["waterway"~"^(river|stream|canal)$"]({bb});']
+    if wr:
+        groups.append(("water and rivers", wr))
     if roads or paths:
         classes = (ROAD_CLASSES if roads else []) + (PATH_CLASSES if paths else [])
-        parts += [f'way["highway"~"^({"|".join(classes)})$"]({bb});']
-    query = f'[out:json][timeout:90];({"".join(parts)});out geom;'
+        groups.append(("roads and paths", [f'way["highway"~"^({"|".join(classes)})$"]({bb});']))
+    if buildings:
+        groups.append(("buildings", [f'way["building"]({bb});', f'relation["building"]({bb});']))
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
-    cf = cache / ("osm_" + hashlib.sha1(query.encode()).hexdigest() + ".json")
-    if cf.exists():
-        return json.loads(cf.read_text())
-    last = None
-    for attempt in range(3):
-        for url in OVERPASS_URLS:
-            try:
-                r = requests.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=150)
-                if r.status_code == 200:
-                    data = r.json()
-                    cf.write_text(json.dumps(data))
-                    return data
-                last = f"{url}: HTTP {r.status_code}"
-            except Exception as e:
-                last = f"{url}: {e}"
-        time.sleep(3 * (attempt + 1))
-    raise RuntimeError(f"Could not fetch OpenStreetMap data ({last}). Try again, or untick water/rivers/buildings.")
+    elements, failed, session = [], [], requests.Session()
+    for gi, (label, parts) in enumerate(groups):
+        base = 56 + 3 * gi
+        query = f'[out:json][timeout:60];({"".join(parts)});out geom qt;'
+        cf = cache / ("osm_" + hashlib.sha1(query.encode()).hexdigest() + ".json")
+        if cf.exists():
+            elements += json.loads(cf.read_text()).get("elements", [])
+            continue
+        last, got, n, slow = None, False, 0, 0
+        total = 2 * len(OVERPASS_URLS)
+        for attempt in range(2):
+            slow = 0
+            for url in OVERPASS_URLS:
+                n += 1
+                host = url.split("/")[2]
+                progress(base, f"Fetching {label} from OpenStreetMap ({host}, try {n}/{total})")
+                print(f"OpenStreetMap: asking {host} for {label} (try {n}/{total})", flush=True)
+                try:
+                    r = session.post(url, data={"data": query}, headers={"User-Agent": USER_AGENT}, timeout=75)
+                    if r.status_code == 200:
+                        data = r.json()
+                        cf.write_text(json.dumps(data))
+                        elements += data.get("elements", [])
+                        got = True
+                        break
+                    last = f"{host}: HTTP {r.status_code}" + (" (busy)" if r.status_code in (429, 504) else "")
+                except Exception as e:
+                    timed_out = "Timeout" in type(e).__name__
+                    slow += timed_out
+                    last = f"{host}: " + ("no answer within 75 s" if timed_out else str(e)[:80])
+                print(f"  {last}", flush=True)
+            if got or slow == len(OVERPASS_URLS):      # every server too slow: asking again straight away won't help
+                break
+            time.sleep(3 * (attempt + 1))
+        if not got:
+            failed.append(label)
+            print(f"Could not get {label} from OpenStreetMap ({last}); that layer is left out. "
+                  f"The public servers are sometimes busy: try again in a few minutes.", flush=True)
+    if groups and len(failed) == len(groups):
+        raise RuntimeError("Could not reach OpenStreetMap (all servers busy or unreachable). Try again in a few minutes, "
+                           "or untick water, rivers, roads, paths and buildings.")
+    return {"elements": elements}
 
 
 def building_height(tags):
@@ -1375,6 +1404,30 @@ def write_3mf_parts(path, parts):
                      f'</resources><build><item objectid="{asm_id}"/></build></model>').encode())
 
 
+def write_surface_obj(path, top_v, mask, idx, palette, nx, ny):
+    """Top surface only (no walls, no underside): an OBJ with one material per colour, plus its MTL."""
+    nyc, nxc = mask.shape
+    VI = np.arange(nx * ny).reshape(ny, nx)
+    rr, cc = np.nonzero(mask)
+    a, b, d, e = VI[rr, cc], VI[rr, cc + 1], VI[rr + 1, cc], VI[rr + 1, cc + 1]
+    tris = np.concatenate([np.stack((a, d, e), 1), np.stack((a, e, b), 1)])
+    col = np.concatenate([idx[rr, cc], idx[rr, cc]]) if idx is not None else np.zeros(len(tris), int)
+    verts, tris = compact(top_v, tris)
+    mtl = path.with_suffix(".mtl")
+    cols = sorted(set(int(c) for c in col))
+    with open(mtl, "w") as fh:
+        for k in cols:
+            r, g, b_ = (palette[k] / 255.0) if idx is not None else (0.67, 0.67, 0.67)
+            fh.write(f"newmtl colour{k + 1}\nKd {r:.4f} {g:.4f} {b_:.4f}\nKa 0 0 0\nKs 0 0 0\n\n")
+    with open(path, "w") as fh:
+        fh.write(f"# surface only, units mm, Z is up\nmtllib {mtl.name}\n")
+        np.savetxt(fh, verts, fmt="v %.4f %.4f %.4f")
+        for k in cols:
+            fh.write(f"usemtl colour{k + 1}\n")
+            np.savetxt(fh, tris[col == k] + 1, fmt="f %d %d %d")
+    print(f"Wrote {path} and {mtl.name}  (top surface only, {len(tris):,} triangles, Z up)")
+
+
 def write_preview(path, idx, palette, Zcell, scale=4, footprint=None, theta=0.0):
     gy, gx = np.gradient(Zcell)
     shade = np.clip(0.75 + (-gx - gy) * 0.8, 0.45, 1.2)
@@ -1431,6 +1484,16 @@ def main():
     ap.add_argument("--scheme", choices=list(SCHEMES), default="satellite",
                     help="terrain colour scheme: true satellite colours, or a palette painted by height (default satellite)")
     ap.add_argument("--progress", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--skin", type=float, default=0.0, metavar="MM",
+                    help="with --split / --3mf-parts: make each colour a thin layer this thick on top of one plain base "
+                         "(less filament changing) instead of colouring all the way down")
+    ap.add_argument("--surface-obj", action="store_true",
+                    help="also write the top surface only, with colours, as an OBJ + MTL (for Blender and renderers)")
+    ap.add_argument("--minecraft", choices=("none", "java", "bedrock"), default="none",
+                    help="also write a Minecraft map: Java .schem, or Bedrock .mcpack of .mcstructure tiles")
+    ap.add_argument("--mc-size", type=int, default=None, help="Minecraft map size in blocks, longest side (default: your grid, up to 400)")
+    ap.add_argument("--mc-version", default="1.20", choices=("1.21", "1.20", "1.19", "1.18", "1.17"),
+                    help="Java version the .schem is written for; it also works in newer versions (default 1.20)")
     ap.add_argument("--portrait", action="store_true", help="swap --ratio to portrait, e.g. 3:2 becomes 2:3")
     ap.add_argument("--square", action="store_true", help="same as --ratio 1:1")
     ap.add_argument("--rotate", default="0",
@@ -1692,6 +1755,7 @@ def main():
             print(f"Colour scheme: {SCHEMES[args.scheme]['label']}")
     else:
         idx, palette = np.zeros((nyc, nxc), np.int32), np.array([[170, 170, 170]], np.uint8)
+    n_terrain = len(palette)
 
     # layers painted on top of the terrain colours, in order
     if use_colour:
@@ -1833,6 +1897,25 @@ def main():
 
     if (args.split or args.threemf_parts) and use_colour:
         parts = []
+        skin = args.skin > 0
+        if skin:
+            # colour layers are only the top `skin` mm; one plain base (in the most common colour, so one filament
+            # does both jobs) fills the rest. Both use the same vertices, so the faces meet exactly.
+            Zb = np.minimum(np.maximum(Z - args.skin, 0.4), Z - 0.2)
+            skin_v = allv.copy()
+            skin_v[nx * ny:, 2] = Zb.ravel()                 # colour layer: floor follows the surface down
+            base_v = allv.copy()
+            base_v[:nx * ny, 2] = Zb.ravel()                 # base: top surface is that same floor
+            area = np.array([((idx == k) & full_mask).sum() for k in range(len(palette))])
+            kb = int(area.argmax())
+            tb, _ = build_part(full_mask, nx, ny)
+            vb, cb = compact(base_v, tb)
+            hxb = "%02x%02x%02x" % tuple(palette[kb])
+            if args.split:
+                pb = out.with_name(f"{out.stem}_base_{hxb}.stl")
+                write_stl(pb, vb, cb)
+                print(f"Wrote {pb}  (plain base, use the same filament as colour #{hxb})")
+            parts.append((f"Base #{hxb}", vb, cb, tuple(int(c) for c in palette[kb])))
         for k in range(len(palette)):
             m = (idx == k) & full_mask
             pm = [(v, t) for v, t, kk in poi_meshes if kk == k]
@@ -1841,7 +1924,7 @@ def main():
             vs, ts, off = [], [], 0
             if m.any():
                 t, _ = build_part(m, nx, ny)
-                v, ct = compact(allv, t)
+                v, ct = compact(skin_v if skin else allv, t)
                 vs.append(v)
                 ts.append(ct)
                 off = len(v)
@@ -1851,7 +1934,8 @@ def main():
                 off += len(v)
             v, ct = np.vstack(vs), np.vstack(ts)
             hx = "%02x%02x%02x" % tuple(palette[k])
-            note = f"{m.sum() / full_mask.sum():.0%} of surface" + (f" + {len(pm)} marker(s)" if pm else "")
+            note = f"{m.sum() / full_mask.sum():.0%} of surface" + (f" + {len(pm)} marker(s)" if pm else "") \
+                + (f", {args.skin:g} mm layer" if skin else "")
             if args.split:
                 p = out.with_name(f"{out.stem}_part{k + 1}_{hx}.stl")
                 write_stl(p, v, ct)
@@ -1863,6 +1947,24 @@ def main():
             print(f"Wrote {pp}  ({len(parts)} parts)")
     elif args.split or args.threemf_parts:
         print("Skipped --split / --3mf-parts: they need --colours 2 or more.")
+
+    if args.surface_obj:
+        progress(94, "Writing the surface-only OBJ")
+        write_surface_obj(out.with_suffix(".obj"), allv[:nx * ny], full_mask, idx if use_colour else None,
+                          palette, nx, ny)
+
+    if args.minecraft != "none":
+        progress(95, "Building the Minecraft map")
+        sys.path.insert(0, str(Path(__file__).resolve().parent))      # find mc_export.py next to this file
+        try:
+            import mc_export
+        except ImportError:
+            sys.exit("mc_export.py is missing. Put it in the same folder as gpx2stl.py to use the Minecraft export.")
+        water_all = water_m | river_m
+        mc_export.export(args, out, dict(
+            idx=idx, palette=palette, n_terrain=n_terrain, mask=full_mask, E=E, E0=E0, water=water_all,
+            bld_mm=bld_h, s_exag=s * args.vertical_exaggeration, longest_m=longest_m,
+            exaggeration=args.vertical_exaggeration, scheme=args.scheme))
 
     progress(97, "Drawing the colour map")
     prev = out.with_name(out.stem + "_preview.png")

@@ -274,13 +274,25 @@ def generate():
         except ValueError:
             abort(400, "Base elevation must be a number of metres")
 
+    if form.get("skin_mode") == "thin":
+        cmd += ["--skin", str(num(form, "skin", 1.2, 0.3, 5))]
+    mc = form.get("minecraft", "none")
+    if mc not in ("none", "java", "bedrock"):
+        abort(400, "Unknown Minecraft edition")
+    if mc != "none":
+        cmd += ["--minecraft", mc]
+        if form.get("mc_size", "").strip():
+            cmd += ["--mc-size", str(num(form, "mc_size", 400, 32, 1000, int))]
+        if form.get("mc_version", "1.20") in ("1.21", "1.20", "1.19", "1.18", "1.17"):
+            cmd += ["--mc-version", form.get("mc_version", "1.20")]
+
     if form.get("smooth", "") != "":
         cmd += ["--smooth", str(num(form, "smooth", 0.8, 0, 6))]
 
     for key, flag in (("no_trail", "--no-trail"), ("clip_sea", "--clip-sea"),
                       ("threemf", "--3mf"), ("threemf_parts", "--3mf-parts"),
                       ("water", "--water"), ("rivers", "--rivers"), ("roads", "--roads"), ("paths", "--paths"), ("buildings", "--buildings"), ("sea", "--sea"),
-                      ("split", "--split"), ("synthetic", "--synthetic")):
+                      ("split", "--split"), ("surface_obj", "--surface-obj"), ("synthetic", "--synthetic")):
         if form.get(key) in ("1", "true", "on"):
             cmd.append(flag)
 
